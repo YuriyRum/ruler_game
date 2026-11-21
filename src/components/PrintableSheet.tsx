@@ -24,10 +24,11 @@ export const PrintableSheet: React.FC<PrintableSheetProps> = ({ lang }) => {
     pairMode: 'all',
     complexity: 'mixed',
     count: 16,
+    gameMode: 'input',
   });
 
   const [problems, setProblems] = React.useState<Problem[]>(() =>
-    generateProblems({ pairMode: 'all', complexity: 'mixed', count: 16 })
+    generateProblems({ pairMode: 'all', complexity: 'mixed', count: 16, gameMode: 'input' })
   );
   const [showAnswers, setShowAnswers] = React.useState(false);
 
@@ -35,8 +36,9 @@ export const PrintableSheet: React.FC<PrintableSheetProps> = ({ lang }) => {
   const tSheet = TRANSLATIONS[lang].sheet;
 
   const regenerate = (next: GeneratorConfig) => {
-    setConfig(next);
-    setProblems(generateProblems(next));
+    const withMode: GeneratorConfig = { ...next, gameMode: 'input' };
+    setConfig(withMode);
+    setProblems(generateProblems(withMode));
   };
 
   return (

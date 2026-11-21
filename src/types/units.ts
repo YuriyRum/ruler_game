@@ -4,10 +4,19 @@ export type UnitPairMode = 'cm-dm' | 'dm-m' | 'cm-m' | 'multi' | 'all';
 
 export type ComplexityMode = 'simple' | 'compound' | 'mixed';
 
+export type GameModeFilter = 'mix' | 'input' | 'choice' | 'compare';
+
+export type TaskFormat = 'input' | 'choice' | 'compare';
+
+export type CompareSign = '<' | '=' | '>';
+
+export type StoryIconKey = 'rocket' | 'cat' | 'footprints' | 'castle' | 'bike' | 'sparkles';
+
 export interface GeneratorConfig {
   pairMode: UnitPairMode;
   complexity: ComplexityMode;
   count: number;
+  gameMode?: GameModeFilter;
 }
 
 export interface PromptPart {
@@ -20,12 +29,23 @@ export interface AnswerSlot {
   expected: number;
 }
 
+export interface ChoiceOption {
+  id: string;
+  parts: AnswerSlot[]; // reuse value/unit structure with expected as numeric value
+}
+
 export interface Problem {
   id: string;
+  format: TaskFormat;
   pair: Exclude<UnitPairMode, 'all'>;
   kind: 'simple' | 'compound';
+  story: LocalizedText;
+  storyIcon: StoryIconKey;
   promptParts: PromptPart[];
   slots: AnswerSlot[];
+  choices?: ChoiceOption[];
+  compareRightParts?: PromptPart[];
+  expectedSign?: CompareSign;
   hint: LocalizedText;
   explanation: LocalizedText;
   ruleBadge: LocalizedText;
@@ -39,7 +59,64 @@ function pickRandom<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)];
 }
 
-function createCmDmProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
+function shuffle<T>(items: T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+const STORIES: { icon: StoryIconKey; ru: string; de: string }[] = [
+  {
+    icon: 'footprints',
+    ru: 'Кенгуру сделал большой прыжок. Помоги измерить его длину!',
+    de: 'Das Känguru hat einen riesigen Sprung gemacht. Hilf beim Umrechnen!',
+  },
+  {
+    icon: 'rocket',
+    ru: 'Бумажный самолётик пролетел прямо через всю комнату!',
+    de: 'Der Papierflieger ist quer durch das ganze Zimmer geflogen!',
+  },
+  {
+    icon: 'cat',
+    ru: 'Кот Барсик прошёл по забору и оставил следы на линейке.',
+    de: 'Kater Felix ist über den Zaun balanciert. Wie weit ist er gekommen?',
+  },
+  {
+    icon: 'castle',
+    ru: 'Робот построил высокую башню из конструктора!',
+    de: 'Der Roboter hat einen richtig hohen Turm aus Bausteinen gebaut!',
+  },
+  {
+    icon: 'bike',
+    ru: 'Юный гонщик проехал по трассе для скейта. Переведи результат!',
+    de: 'Ein Skateboard-Profi ist über die Rampe gesaust. Rechne die Strecke um!',
+  },
+];
+
+const COMPARE_STORIES: { icon: StoryIconKey; ru: string; de: string }[] = [
+  {
+    icon: 'footprints',
+    ru: 'Кто прыгнул дальше — лягушка или кузнечик? Сравни две длины!',
+    de: 'Wer ist weiter gesprungen — Frosch oder Grashüpfer? Vergleiche!',
+  },
+  {
+    icon: 'rocket',
+    ru: 'Две ракеты запустили в небо. Чей полёт длиннее?',
+    de: 'Zwei Spielzeugraketen sind gestartet. Welche flog weiter?',
+  },
+  {
+    icon: 'castle',
+    ru: 'Два строителя спорят, чья башня выше. Помоги им разобраться!',
+    de: 'Zwei Baumeister streiten, wessen Turm höher ist. Hilf ihnen!',
+  },
+];
+
+type BaseDraft = Omit<Problem, 'id' | 'format' | 'story' | 'storyIcon'>;
+
+function createCmDmProblem(kind: 'simple' | 'compound'): BaseDraft {
   if (kind === 'simple') {
     const forward = Math.random() < 0.5;
     const dm = randomInt(1, 15);
@@ -52,8 +129,8 @@ function createCmDmProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
         slots: [{ unit: 'cm', expected: ans }],
         ruleBadge: { ru: '1 дм = 10 см', de: '1 dm = 10 cm' },
         hint: {
-          ru: `В каждом дециметре 10 сантиметров. Умножь ${dm} на 10 (допиши ноль справа).`,
-          de: `In jedem Dezimeter stecken 10 Zentimeter. Rechne ${dm} × 10 (hänge rechts eine Null an).`,
+          ru: `В 1 дм ровно 10 см. Чтобы перевести в мелкие сантиметры, допиши один ноль к числу ${dm} (умножь на 10).`,
+          de: `1 dm sind genau 10 cm. Für Zentimeter hänge einfach eine Null an ${dm} an (mal 10).`,
         },
         explanation: {
           ru: `${dm} дм = ${dm} × 10 см = ${ans} см.`,
@@ -69,8 +146,8 @@ function createCmDmProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
         slots: [{ unit: 'dm', expected: dm }],
         ruleBadge: { ru: '10 см = 1 дм', de: '10 cm = 1 dm' },
         hint: {
-          ru: `Дециметр в 10 раз крупнее сантиметра. Раздели ${cm} на 10 (убери один ноль).`,
-          de: `Ein Dezimeter ist 10-mal größer als ein Zentimeter. Teile ${cm} durch 10 (streiche eine Null).`,
+          ru: `Дециметры крупнее сантиметров в 10 раз. Убери один ноль у числа ${cm} (раздели на 10).`,
+          de: `Dezimeter sind 10-mal größer als Zentimeter. Streiche eine Null bei ${cm} (geteilt durch 10).`,
         },
         explanation: {
           ru: `${cm} см = ${cm} : 10 = ${dm} дм.`,
@@ -96,8 +173,8 @@ function createCmDmProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
       slots: [{ unit: 'cm', expected: totalCm }],
       ruleBadge: { ru: '1 дм = 10 см', de: '1 dm = 10 cm' },
       hint: {
-        ru: `Сначала переведи ${dm} дм в сантиметры (${dm} × 10), а затем прибавь ещё ${remCm} см.`,
-        de: `Rechne zuerst ${dm} dm in Zentimeter um (${dm} × 10) und zähle dann ${remCm} cm dazu.`,
+        ru: `Сначала переведи ${dm} дм в сантиметры (допиши ноль), а потом прибавь ${remCm} см.`,
+        de: `Rechne zuerst ${dm} dm in Zentimeter um (eine Null anhängen) und zähle dann ${remCm} cm dazu.`,
       },
       explanation: {
         ru: `${dm} дм ${remCm} см = ${dm * 10} см + ${remCm} см = ${totalCm} см.`,
@@ -116,8 +193,8 @@ function createCmDmProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
     ],
     ruleBadge: { ru: '10 см = 1 дм', de: '10 cm = 1 dm' },
     hint: {
-      ru: `Сколько полных десятков в числе ${totalCm}? Десятки станут дециметрами, а единицы останутся сантиметрами.`,
-      de: `Wie viele volle Zehner stecken in ${totalCm}? Die Zehner werden zu Dezimetern, der Rest bleibt in Zentimetern.`,
+      ru: `Раздели число ${totalCm} на десятки и единицы: сколько полных десятков — столько дм, а остаток — это см.`,
+      de: `Teile ${totalCm} in Zehner und Einer auf: Die Zehner sind die Dezimeter, der Rest bleibt in Zentimetern.`,
     },
     explanation: {
       ru: `${totalCm} см = ${dm * 10} см + ${remCm} см = ${dm} дм ${remCm} см.`,
@@ -126,7 +203,7 @@ function createCmDmProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
   };
 }
 
-function createDmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
+function createDmMProblem(kind: 'simple' | 'compound'): BaseDraft {
   if (kind === 'simple') {
     const forward = Math.random() < 0.5;
     const m = randomInt(1, 12);
@@ -139,8 +216,8 @@ function createDmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
         slots: [{ unit: 'dm', expected: ans }],
         ruleBadge: { ru: '1 м = 10 дм', de: '1 m = 10 dm' },
         hint: {
-          ru: `В 1 метре помещается 10 дециметров. Умножь ${m} на 10.`,
-          de: `In 1 Meter passen 10 Dezimeter. Rechne ${m} × 10.`,
+          ru: `В 1 м ровно 10 дм. Допиши один ноль к числу ${m} (умножь на 10).`,
+          de: `In 1 m stecken 10 dm. Hänge einfach eine Null an ${m} an (mal 10).`,
         },
         explanation: {
           ru: `${m} м = ${m} × 10 дм = ${ans} дм.`,
@@ -156,8 +233,8 @@ function createDmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
         slots: [{ unit: 'm', expected: m }],
         ruleBadge: { ru: '10 дм = 1 м', de: '10 dm = 1 m' },
         hint: {
-          ru: `Метр в 10 раз больше дециметра. Раздели ${dm} на 10.`,
-          de: `Ein Meter ist 10-mal größer als ein Dezimeter. Teile ${dm} durch 10.`,
+          ru: `Метры в 10 раз крупнее дециметров. Убери один ноль у числа ${dm} (раздели на 10).`,
+          de: `Meter sind 10-mal größer als Dezimeter. Streiche eine Null bei ${dm} (geteilt durch 10).`,
         },
         explanation: {
           ru: `${dm} дм = ${dm} : 10 = ${m} м.`,
@@ -183,8 +260,8 @@ function createDmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
       slots: [{ unit: 'dm', expected: totalDm }],
       ruleBadge: { ru: '1 м = 10 дм', de: '1 m = 10 dm' },
       hint: {
-        ru: `Переведи ${m} м в дециметры (${m} × 10) и прибавь ${remDm} дм.`,
-        de: `Rechne ${m} m in Dezimeter um (${m} × 10) und zähle ${remDm} dm dazu.`,
+        ru: `Сначала переведи ${m} м в дециметры (допиши ноль), а потом прибавь ${remDm} дм.`,
+        de: `Rechne zuerst ${m} m in Dezimeter um (eine Null anhängen) und zähle ${remDm} dm dazu.`,
       },
       explanation: {
         ru: `${m} м ${remDm} дм = ${m * 10} дм + ${remDm} дм = ${totalDm} дм.`,
@@ -203,8 +280,8 @@ function createDmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
     ],
     ruleBadge: { ru: '10 дм = 1 м', de: '10 dm = 1 m' },
     hint: {
-      ru: `Каждые 10 дм — это 1 метр. Раздели число ${totalDm} на десятки и единицы.`,
-      de: `Jeweils 10 dm sind 1 Meter. Teile ${totalDm} in Zehner und Einer auf.`,
+      ru: `Каждые 10 дм складываются в 1 м. Десятки числа ${totalDm} — это метры, единицы — оставшиеся дм.`,
+      de: `Je 10 dm ergeben 1 m. Die Zehner in ${totalDm} sind die Meter, die Einer bleiben Dezimeter.`,
     },
     explanation: {
       ru: `${totalDm} дм = ${m * 10} дм + ${remDm} дм = ${m} м ${remDm} дм.`,
@@ -213,7 +290,7 @@ function createDmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
   };
 }
 
-function createCmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
+function createCmMProblem(kind: 'simple' | 'compound'): BaseDraft {
   if (kind === 'simple') {
     const forward = Math.random() < 0.5;
     const m = randomInt(1, 9);
@@ -226,8 +303,8 @@ function createCmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
         slots: [{ unit: 'cm', expected: ans }],
         ruleBadge: { ru: '1 м = 100 см', de: '1 m = 100 cm' },
         hint: {
-          ru: `В 1 метре 100 сантиметров! Умножь ${m} на 100 (допиши два нуля).`,
-          de: `In 1 Meter sind 100 Zentimeter! Rechne ${m} × 100 (hänge zwei Nullen an).`,
+          ru: `В 1 м ровно 100 см! Допиши два нуля к числу ${m} (умножь на 100).`,
+          de: `In 1 m stecken 100 cm! Hänge zwei Nullen an ${m} an (mal 100).`,
         },
         explanation: {
           ru: `${m} м = ${m} × 100 см = ${ans} см.`,
@@ -243,8 +320,8 @@ function createCmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
         slots: [{ unit: 'm', expected: m }],
         ruleBadge: { ru: '100 см = 1 м', de: '100 cm = 1 m' },
         hint: {
-          ru: `Метр в 100 раз крупнее сантиметра. Раздели ${cm} на 100 (убери два нуля).`,
-          de: `Ein Meter ist 100-mal größer als ein Zentimeter. Teile ${cm} durch 100 (streiche zwei Nullen).`,
+          ru: `Метры в 100 раз крупнее сантиметров. Убери два нуля у числа ${cm} (раздели на 100).`,
+          de: `Meter sind 100-mal größer als Zentimeter. Streiche zwei Nullen bei ${cm} (geteilt durch 100).`,
         },
         explanation: {
           ru: `${cm} см = ${cm} : 100 = ${m} м.`,
@@ -270,8 +347,8 @@ function createCmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
       slots: [{ unit: 'cm', expected: totalCm }],
       ruleBadge: { ru: '1 м = 100 см', de: '1 m = 100 cm' },
       hint: {
-        ru: `В ${m} м будет ${m} сотен сантиметров (${m} × 100). Прибавь ещё ${remCm} см — не потеряй ноль, если сантиметров меньше 10!`,
-        de: `${m} m sind ${m * 100} cm (${m} × 100). Zähle ${remCm} cm dazu — vergiss bei Zahlen unter 10 die Null in der Mitte nicht!`,
+        ru: `В ${m} м будет ${m * 100} см (допиши два нуля), потом прибавь ${remCm} см. Осторожно с нулём в середине, если см меньше 10!`,
+        de: `${m} m sind ${m * 100} cm (zwei Nullen anhängen), dann ${remCm} cm addieren. Achte auf die Null in der Mitte, falls cm kleiner als 10 ist!`,
       },
       explanation: {
         ru: `${m} м ${remCm} см = ${m * 100} см + ${remCm} см = ${totalCm} см.`,
@@ -290,8 +367,8 @@ function createCmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
     ],
     ruleBadge: { ru: '100 см = 1 м', de: '100 cm = 1 m' },
     hint: {
-      ru: `Сотни в числе ${totalCm} — это метры, а десятки и единицы — оставшиеся сантиметры.`,
-      de: `Die Hunderter in ${totalCm} sind die Meter, und die Zehner und Einer bleiben Zentimeter.`,
+      ru: `Каждые 100 см дают 1 метр. Посмотри на сотни в числе ${totalCm} — это метры, а остаток — сантиметры.`,
+      de: `Je 100 cm ergeben 1 Meter. Die Hunderter in ${totalCm} sind die Meter, der Rest sind Zentimeter.`,
     },
     explanation: {
       ru: `${totalCm} см = ${m * 100} см + ${remCm} см = ${m} м ${remCm} см.`,
@@ -300,7 +377,7 @@ function createCmMProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
   };
 }
 
-function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'> {
+function createMultiUnitProblem(kind: 'simple' | 'compound'): BaseDraft {
   const target = pickRandom<UnitCode>(['cm', 'dm', 'm']);
 
   if (target === 'cm') {
@@ -321,8 +398,8 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
           de: '1 m = 100 cm · 1 dm = 10 cm',
         },
         hint: {
-          ru: `Переведи каждую часть в сантиметры: ${m} м — это ${m * 100} см, а ${dm} дм — это ${dm} × 10 см. Потом сложи.`,
-          de: `Rechne jeden Teil in Zentimeter um: ${m} m sind ${m * 100} cm und ${dm} dm sind ${dm} × 10 cm. Dann zusammenzählen.`,
+          ru: `Переведи каждую часть в сантиметры: ${m} м = ${m * 100} см (два нуля) и ${dm} дм = ${dm * 10} см (один ноль), а потом сложи.`,
+          de: `Rechne jeden Teil zuerst in Zentimeter um: ${m} m = ${m * 100} cm (zwei Nullen) und ${dm} dm = ${dm * 10} cm (eine Null), dann zusammenzählen.`,
         },
         explanation: {
           ru: `${m} м ${dm} дм = ${m * 100} см + ${dm * 10} см = ${totalCm} см.`,
@@ -349,8 +426,8 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
         de: '1 m = 100 cm · 1 dm = 10 cm',
       },
       hint: {
-        ru: `Собери всё в сантиметрах: сотни — это метры (${m} × 100), десятки — дециметры (${dm} × 10), плюс ${cm} см.`,
-        de: `Alles in Zentimeter umwandeln: Meter sind Hunderter (${m} × 100), Dezimeter sind Zehner (${dm} × 10), plus ${cm} cm.`,
+        ru: `Переведи все части в сантиметры: метры в сотни (${m} × 100), дециметры в десятки (${dm} × 10), прибавь ${cm} см и сложи.`,
+        de: `Wandle zuerst alles in Zentimeter um: Meter in Hunderter (${m} × 100), Dezimeter in Zehner (${dm} × 10), plus ${cm} cm.`,
       },
       explanation: {
         ru: `${m} м ${dm} дм ${cm} см = ${m * 100} см + ${dm * 10} см + ${cm} см = ${totalCm} см.`,
@@ -380,8 +457,8 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
             de: '1 m = 10 dm · 10 cm = 1 dm',
           },
           hint: {
-            ru: `Переведи всё в дециметры: в ${m} м ровно ${m} × 10 дм, а ${cm} см раздели на 10.`,
-            de: `Alles in Dezimeter umrechnen: ${m} m sind ${m} × 10 dm und ${cm} cm teilst du durch 10.`,
+            ru: `Ты можешь сначала всё перевести в сантиметры (${m * 100} + ${cm}), сложить, а потом перевести в ожидаемые дециметры (убрать один ноль).`,
+            de: `Du kannst zuerst alles in Zentimeter umrechnen (${m * 100} + ${cm}), zusammenzählen und danach eine Null streichen, um Dezimeter zu bekommen.`,
           },
           explanation: {
             ru: `${m} м ${cm} см = ${m * 10} дм + ${cmTens} дм = ${totalDm} дм.`,
@@ -404,8 +481,8 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
         slots: [{ unit: 'dm', expected: totalDm }],
         ruleBadge: { ru: '10 см = 1 дм', de: '10 cm = 1 dm' },
         hint: {
-          ru: `Сантиметры ${cm} см переведи в дециметры (раздели на 10) и прибавь к ${dm} дм.`,
-          de: `Rechne ${cm} cm in Dezimeter um (durch 10 teilen) und zähle sie zu ${dm} dm dazu.`,
+          ru: `Переведи ${cm} см в дециметры (убери один ноль) и прибавь к ${dm} дм — или сначала сложи всё в см, а потом убери ноль.`,
+          de: `Wandle ${cm} cm in Dezimeter um (eine Null streichen) und zähle ${dm} dm dazu — oder rechne erst alles in cm und streiche dann eine Null.`,
         },
         explanation: {
           ru: `${dm} дм ${cm} см = ${dm} дм + ${cmTens} дм = ${totalDm} дм.`,
@@ -433,8 +510,8 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
         de: '1 m = 10 dm · 10 cm = 1 dm',
       },
       hint: {
-        ru: `Каждую часть переведи в дециметры: ${m} м = ${m * 10} дм, ${dm} дм уже в дециметрах, а ${cm} см = ${cm} : 10 дм.`,
-        de: `Wandle jeden Teil in Dezimeter um: ${m} m = ${m * 10} dm, ${dm} dm bleiben, und ${cm} cm = ${cm} : 10 dm.`,
+        ru: `Ты можешь сначала всё перевести в сантиметры (${m * 100} + ${dm * 10} + ${cm}), посчитать, а потом перевести в ожидаемые дециметры (убрать один ноль).`,
+        de: `Du kannst zuerst alles in Zentimeter umrechnen (${m * 100} + ${dm * 10} + ${cm}), zusammenzählen und danach eine Null streichen, um Dezimeter zu erhalten.`,
       },
       explanation: {
         ru: `${m} м ${dm} дм ${cm} см = ${m * 10} дм + ${dm} дм + ${cmTens} дм = ${totalDm} дм.`,
@@ -465,8 +542,8 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
           de: '10 dm = 1 m · 100 cm = 1 m',
         },
         hint: {
-          ru: `Переведи в метры обе части: ${dm} дм раздели на 10, а ${cm} см раздели на 100.`,
-          de: `Rechne beide Teile in Meter um: ${dm} dm durch 10 teilen und ${cm} cm durch 100 teilen.`,
+          ru: `Ты можешь сначала перевести всё в сантиметры (${dm * 10} + ${cm}), сложить, а потом убрать два нуля, чтобы получить метры.`,
+          de: `Du kannst zuerst alles in Zentimeter umrechnen (${dm * 10} + ${cm}), addieren und danach zwei Nullen streichen, um Meter zu erhalten.`,
         },
         explanation: {
           ru: `${dm} дм ${cm} см = ${dmTens} м + ${cmHundreds} м = ${totalM} м.`,
@@ -490,8 +567,8 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
         slots: [{ unit: 'm', expected: totalM }],
         ruleBadge: { ru: '10 дм = 1 м', de: '10 dm = 1 m' },
         hint: {
-          ru: `Переведи ${dm} дм в метры (раздели на 10) и прибавь к ${m} м.`,
-          de: `Rechne ${dm} dm in Meter um (durch 10 teilen) und zähle sie zu ${m} m dazu.`,
+          ru: `Переведи ${dm} дм в метры (убери один ноль) и сложи с ${m} м — или переведи всё в см и убери два нуля.`,
+          de: `Rechne ${dm} dm in Meter um (eine Null streichen) und zähle ${m} m dazu — oder rechne erst alles in cm und streiche zwei Nullen.`,
         },
         explanation: {
           ru: `${m} м ${dm} дм = ${m} м + ${dmTens} м = ${totalM} м.`,
@@ -514,8 +591,8 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
       slots: [{ unit: 'm', expected: totalM }],
       ruleBadge: { ru: '100 см = 1 м', de: '100 cm = 1 m' },
       hint: {
-        ru: `Переведи ${cm} см в метры (раздели на 100) и прибавь к ${m} м.`,
-        de: `Rechne ${cm} cm in Meter um (durch 100 teilen) und zähle sie zu ${m} m dazu.`,
+        ru: `Переведи ${cm} см в метры (убери два нуля) и прибавь к ${m} м.`,
+        de: `Rechne ${cm} cm in Meter um (zwei Nullen streichen) und zähle ${m} m dazu.`,
       },
       explanation: {
         ru: `${m} м ${cm} см = ${m} м + ${cmHundreds} м = ${totalM} м.`,
@@ -544,12 +621,208 @@ function createMultiUnitProblem(kind: 'simple' | 'compound'): Omit<Problem, 'id'
       de: '10 dm = 1 m · 100 cm = 1 m',
     },
     hint: {
-      ru: `Переведи все части в метры: ${dm} дм раздели на 10, ${cm} см раздели на 100, и всё сложи с ${m} м.`,
-      de: `Wandle alle Teile in Meter um: ${dm} dm durch 10 teilen, ${cm} cm durch 100 teilen und alles zu ${m} m addieren.`,
+      ru: `Ты можешь сначала всё перевести в сантиметры (${m * 100} + ${dm * 10} + ${cm}), сложить, а потом перевести в метры (убрать два нуля).`,
+      de: `Du kannst zuerst alles in Zentimeter umrechnen (${m * 100} + ${dm * 10} + ${cm}), zusammenzählen und danach zwei Nullen streichen, um Meter zu erhalten.`,
     },
     explanation: {
       ru: `${m} м ${dm} дм ${cm} см = ${m} м + ${dmTens} м + ${cmHundreds} м = ${totalM} м.`,
       de: `${m} m ${dm} dm ${cm} cm = ${m} m + ${dmTens} m + ${cmHundreds} m = ${totalM} m.`,
+    },
+  };
+}
+
+function buildChoiceOptions(slots: AnswerSlot[]): ChoiceOption[] {
+  const serialize = (parts: AnswerSlot[]) =>
+    parts.map((p) => `${p.expected}${p.unit}`).join('|');
+
+  const correctKey = serialize(slots);
+  const candidates: AnswerSlot[][] = [];
+
+  if (slots.length === 1) {
+    const { expected, unit } = slots[0];
+    const proposals = [
+      expected * 10,
+      expected >= 10 && expected % 10 === 0 ? expected / 10 : expected + 10,
+      expected > 10 ? expected - 10 : expected + 2,
+      expected + 100,
+      expected > 100 ? expected - 90 : expected + 5,
+      Math.max(1, expected + (expected % 2 === 0 ? 1 : -1)),
+    ];
+    for (const val of proposals) {
+      if (val > 0 && val !== expected) {
+        candidates.push([{ unit, expected: val }]);
+      }
+    }
+  } else {
+    const [first, second] = slots;
+    const proposals: AnswerSlot[][] = [
+      [
+        { unit: first.unit, expected: second.expected },
+        { unit: second.unit, expected: first.expected },
+      ],
+      [
+        { unit: first.unit, expected: first.expected + 1 },
+        { unit: second.unit, expected: second.expected },
+      ],
+      [
+        { unit: first.unit, expected: first.expected },
+        { unit: second.unit, expected: second.expected + 10 },
+      ],
+      [
+        { unit: first.unit, expected: Math.max(1, first.expected - 1) },
+        { unit: second.unit, expected: second.expected },
+      ],
+      [
+        { unit: first.unit, expected: first.expected * 10 },
+        { unit: second.unit, expected: second.expected },
+      ],
+    ];
+    for (const p of proposals) {
+      if (p[0].expected !== p[1].expected || p[0].expected !== first.expected) {
+        candidates.push(p);
+      }
+    }
+  }
+
+  const picked: ChoiceOption[] = [{ id: 'opt-correct', parts: slots }];
+  const seen = new Set<string>([correctKey]);
+
+  for (const cand of candidates) {
+    const key = serialize(cand);
+    if (!seen.has(key)) {
+      seen.add(key);
+      picked.push({ id: `opt-${picked.length}`, parts: cand });
+      if (picked.length === 4) break;
+    }
+  }
+
+  // Fallback if fewer than 4
+  let offset = 2;
+  while (picked.length < 4) {
+    const fallback = slots.map((s, i) =>
+      i === 0 ? { ...s, expected: s.expected + offset } : s
+    );
+    const key = serialize(fallback);
+    if (!seen.has(key)) {
+      seen.add(key);
+      picked.push({ id: `opt-${picked.length}`, parts: fallback });
+    }
+    offset++;
+  }
+
+  return shuffle(picked);
+}
+
+function partsToCm(parts: PromptPart[]): number {
+  return parts.reduce((sum, p) => {
+    if (p.unit === 'm') return sum + p.value * 100;
+    if (p.unit === 'dm') return sum + p.value * 10;
+    return sum + p.value;
+  }, 0);
+}
+
+function createCompareProblem(
+  pair: Exclude<UnitPairMode, 'all'>,
+  kind: 'simple' | 'compound'
+): Problem {
+  let leftParts: PromptPart[];
+  let rightParts: PromptPart[];
+  let ruleBadge: LocalizedText;
+
+  const isEqual = Math.random() < 0.34;
+
+  if (pair === 'cm-dm') {
+    const dm = randomInt(2, 9);
+    const extraCm = kind === 'compound' ? randomInt(1, 9) : 0;
+    leftParts = extraCm > 0 ? [{ value: dm, unit: 'dm' }, { value: extraCm, unit: 'cm' }] : [{ value: dm, unit: 'dm' }];
+    if (isEqual) {
+      rightParts = [{ value: dm * 10 + extraCm, unit: 'cm' }];
+    } else {
+      const delta = pickRandom([-10, 10, -5, 5, 20]);
+      rightParts = [{ value: Math.max(10, dm * 10 + extraCm + delta), unit: 'cm' }];
+    }
+    ruleBadge = { ru: '1 дм = 10 см', de: '1 dm = 10 cm' };
+  } else if (pair === 'dm-m') {
+    const m = randomInt(1, 7);
+    const extraDm = kind === 'compound' ? randomInt(1, 9) : 0;
+    leftParts = extraDm > 0 ? [{ value: m, unit: 'm' }, { value: extraDm, unit: 'dm' }] : [{ value: m, unit: 'm' }];
+    if (isEqual) {
+      rightParts = [{ value: m * 10 + extraDm, unit: 'dm' }];
+    } else {
+      const delta = pickRandom([-10, 10, -5, 5]);
+      rightParts = [{ value: Math.max(5, m * 10 + extraDm + delta), unit: 'dm' }];
+    }
+    ruleBadge = { ru: '1 м = 10 дм', de: '1 m = 10 dm' };
+  } else if (pair === 'cm-m') {
+    const m = randomInt(1, 6);
+    const extraCm = kind === 'compound' ? randomInt(1, 9) : 0; // great zero trap!
+    leftParts = extraCm > 0 ? [{ value: m, unit: 'm' }, { value: extraCm, unit: 'cm' }] : [{ value: m, unit: 'm' }];
+    if (isEqual) {
+      rightParts = [{ value: m * 100 + extraCm, unit: 'cm' }];
+    } else {
+      // e.g., 2 m 5 cm vs 250 cm or 25 dm
+      const altCm = m * 100 + (extraCm > 0 ? extraCm * 10 : pickRandom([-50, 50, 100]));
+      rightParts = [{ value: Math.max(50, altCm), unit: 'cm' }];
+    }
+    ruleBadge = { ru: '1 м = 100 см', de: '1 m = 100 cm' };
+  } else {
+    // multi: compare mixed units across cm, dm, m
+    const m = randomInt(1, 4);
+    const dm = randomInt(1, 8);
+    const cm = kind === 'compound' ? randomInt(1, 9) : 0;
+    leftParts =
+      cm > 0
+        ? [
+            { value: m, unit: 'm' },
+            { value: dm, unit: 'dm' },
+            { value: cm, unit: 'cm' },
+          ]
+        : [
+            { value: m, unit: 'm' },
+            { value: dm, unit: 'dm' },
+          ];
+    const leftCm = partsToCm(leftParts);
+    if (isEqual) {
+      rightParts =
+        cm === 0
+          ? [{ value: m * 10 + dm, unit: 'dm' }]
+          : [{ value: leftCm, unit: 'cm' }];
+    } else {
+      const deltaDm = pickRandom([-3, -1, 1, 3, 5]);
+      rightParts = [{ value: Math.max(5, m * 10 + dm + deltaDm), unit: 'dm' }];
+    }
+    ruleBadge = { ru: '1 м = 100 см · 1 дм = 10 см', de: '1 m = 100 cm · 1 dm = 10 cm' };
+  }
+
+  const leftCm = partsToCm(leftParts);
+  const rightCm = partsToCm(rightParts);
+  const expectedSign: CompareSign = leftCm < rightCm ? '<' : leftCm > rightCm ? '>' : '=';
+  const story = pickRandom(COMPARE_STORIES);
+
+  const leftRu = formatUnitParts(leftParts, 'ru');
+  const rightRu = formatUnitParts(rightParts, 'ru');
+  const leftDe = formatUnitParts(leftParts, 'de');
+  const rightDe = formatUnitParts(rightParts, 'de');
+
+  return {
+    id: '',
+    format: 'compare',
+    pair,
+    kind,
+    story: { ru: story.ru, de: story.de },
+    storyIcon: story.icon,
+    promptParts: leftParts,
+    compareRightParts: rightParts,
+    expectedSign,
+    slots: [],
+    ruleBadge,
+    hint: {
+      ru: `Сначала переведи обе стороны в сантиметры, чтобы честно сравнить числа!`,
+      de: `Rechne zuerst beide Seiten in Zentimeter um, damit du die Zahlen fair vergleichen kannst!`,
+    },
+    explanation: {
+      ru: `${leftRu} = ${leftCm} см, а ${rightRu} = ${rightCm} см. Поэтому ${leftRu} ${expectedSign} ${rightRu}.`,
+      de: `${leftDe} = ${leftCm} cm und ${rightDe} = ${rightCm} cm. Darum gilt: ${leftDe} ${expectedSign} ${rightDe}.`,
     },
   };
 }
@@ -559,9 +832,10 @@ export function generateProblems(config: GeneratorConfig): Problem[] {
   const seenPrompts = new Set<string>();
   const pairs: Exclude<UnitPairMode, 'all'>[] =
     config.pairMode === 'all' ? ['cm-dm', 'dm-m', 'cm-m', 'multi'] : [config.pairMode];
+  const gameMode: GameModeFilter = config.gameMode ?? 'mix';
 
   let guard = 0;
-  while (results.length < config.count && guard < config.count * 12) {
+  while (results.length < config.count && guard < config.count * 14) {
     guard++;
     const pair = pickRandom(pairs);
     const kind: 'simple' | 'compound' =
@@ -571,25 +845,49 @@ export function generateProblems(config: GeneratorConfig): Problem[] {
           : 'compound'
         : config.complexity;
 
-    let draft: Omit<Problem, 'id'>;
-    if (pair === 'cm-dm') {
-      draft = createCmDmProblem(kind);
-    } else if (pair === 'dm-m') {
-      draft = createDmMProblem(kind);
-    } else if (pair === 'cm-m') {
-      draft = createCmMProblem(kind);
+    const format: TaskFormat =
+      gameMode === 'mix'
+        ? pickRandom<TaskFormat>(['input', 'choice', 'compare'])
+        : gameMode;
+
+    let problem: Problem;
+    if (format === 'compare') {
+      problem = createCompareProblem(pair, kind);
     } else {
-      draft = createMultiUnitProblem(kind);
+      let draft: BaseDraft;
+      if (pair === 'cm-dm') {
+        draft = createCmDmProblem(kind);
+      } else if (pair === 'dm-m') {
+        draft = createDmMProblem(kind);
+      } else if (pair === 'cm-m') {
+        draft = createCmMProblem(kind);
+      } else {
+        draft = createMultiUnitProblem(kind);
+      }
+
+      const story = pickRandom(STORIES);
+      problem = {
+        ...draft,
+        id: '',
+        format,
+        story: { ru: story.ru, de: story.de },
+        storyIcon: story.icon,
+        choices: format === 'choice' ? buildChoiceOptions(draft.slots) : undefined,
+      };
     }
 
-    const signature = `${draft.promptParts.map((p) => `${p.value}${p.unit}`).join(' ')}->${draft.slots.map((s) => s.unit).join(',')}`;
-    if (seenPrompts.has(signature) && guard < config.count * 8) {
+    const signature =
+      problem.format === 'compare'
+        ? `cmp:${problem.promptParts.map((p) => `${p.value}${p.unit}`).join(' ')}vs${problem.compareRightParts?.map((p) => `${p.value}${p.unit}`).join(' ')}`
+        : `${problem.format}:${problem.promptParts.map((p) => `${p.value}${p.unit}`).join(' ')}->${problem.slots.map((s) => s.unit).join(',')}`;
+
+    if (seenPrompts.has(signature) && guard < config.count * 9) {
       continue;
     }
     seenPrompts.add(signature);
 
     results.push({
-      ...draft,
+      ...problem,
       id: `p-${Date.now()}-${results.length}-${Math.random().toString(36).slice(2, 6)}`,
     });
   }
@@ -601,6 +899,18 @@ export function formatPrompt(problem: Problem, lang: Language): string {
   return formatUnitParts(problem.promptParts, lang);
 }
 
+export function formatCompareRight(problem: Problem, lang: Language): string {
+  if (!problem.compareRightParts) return '';
+  return formatUnitParts(problem.compareRightParts, lang);
+}
+
+export function formatSlots(slots: AnswerSlot[], lang: Language): string {
+  return slots.map((slot) => `${slot.expected} ${formatUnit(slot.unit, lang)}`).join(' ');
+}
+
 export function formatExpectedAnswer(problem: Problem, lang: Language): string {
-  return problem.slots.map((slot) => `${slot.expected} ${formatUnit(slot.unit, lang)}`).join(' ');
+  if (problem.format === 'compare' && problem.expectedSign) {
+    return `${formatPrompt(problem, lang)} ${problem.expectedSign} ${formatCompareRight(problem, lang)}`;
+  }
+  return formatSlots(problem.slots, lang);
 }
