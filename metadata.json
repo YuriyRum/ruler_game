@@ -1,0 +1,6 @@
+{
+  "name": "Линейка — метры, дециметры и сантиметры",
+  "description": "Обучающее приложение и генератор примеров для детей 10 лет: наглядный перевод между сантиметрами, дециметрами и метрами.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
